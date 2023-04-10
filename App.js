@@ -1,4 +1,4 @@
-import React, { Component } from 'react';
+import React, { Component, useState , useEffect} from 'react';
 import {
   Alert,
   StyleSheet,
@@ -11,117 +11,146 @@ import {
 } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as SplashScreen from 'expo-splash-screen';
-
-const keyHeight = '@MyApp:keyHeight';
-const keyBMI = '@MyApp:keyBMI';
+import Constants from "expo-constants";
+import * as SQLite from "expo-sqlite";
 
 SplashScreen.preventAutoHideAsync();
 setTimeout(SplashScreen.hideAsync, 2000);
 
+const keyHeight = '@MyApp:keyHeight';
+const keyBMI = '@MyApp:keyBMI';
 
-export default class App extends Component {
-  state = {
-    height: 0,
-    weight: 0,
-    BMI: 0,
+function openDatabase() {
+  if (Platform.OS === "web") {
+    return {
+      transaction: () => {
+        return {
+          executeSql: () => {},
+        };
+      },
+    };
+  }
+
+  const bmiDB = SQLite.openDatabase("bmiDB.db");
+  return bmiDB;
+}
+
+const bmiDB = openDatabase();
+
+function Calculations({ }) {
+  const [calculations, setCalculations] = useState(null);
+
+  useEffect(() => {
+    bmiDB.transaction((tx) => {
+      tx.executeSql(
+        `select id, height, weight, bmi, date(calculationDate) from calculations 
+         order by calculationDate desc;`,
+        [],
+        (_, { rows: { _array } }) => setCalculations(_array)
+      );
+    });
+  }, []);
+
+  if (calculations === null || calculations.length === 0) {
+    return null;
+  }
+
+  return (
+    <View style={styles.sectionContainer}>
+      <Text style={styles.sectionHeading}>BMI History</Text>
+      {calculations.map(({ id, bmi, height, weight, calculationDate }) => (
+        <Text key={id} style={styles.display}>{calculationDate}: {bmi} (W: {weight}, H: {height})</Text>
+      ))}
+    </View>
+  );
+}
+
+
+export default function App() {
+
+  const [bmi, setBMI] = useState(null);
+  const [height, setHeight] = useState(null);
+  const [weight, setWeight] = useState(null);
+
+  useEffect(() => {
+    bmiDB.transaction((tx) => {
+      tx.executeSql(
+        "create table if not exists calculations (id integer primary key not null, height text, weight text, calculationDate real, bmi text);"
+      );
+    });
+  }, []);
+
+  const add = () => {
+    // is text empty?
+    if (height === null || height === "" || weight === null || weight === "") {
+      return false;
+    } else {
+      setHeight(height);
+      setWeight(weight);
+    }
+
+    bmi = calcBMI();
+
+    if (bmi === "" || bmi === null) {
+     return false; 
+    }
+
+    bmiDB.transaction(
+      (tx) => {
+        tx.executeSql("insert into calculations (bmi, height, weight, calculationDate) values ("[bmi], [height], [weight], julinday('now'));
+        tx.executeSql("select * from calculations order by calculationDate desc;",
+         [], (_, { rows }) =>
+          console.log(JSON.stringify(rows))
+        );
+      },
+    );
   };
-
-
-  
-  constructor(props) {
-    super(props);
-    this.onLoadHeight();
-    this.onLoadBMI();
-  }
-
-  onLoadHeight = async () => {
-    try {
-      const storedHeight = await AsyncStorage.getItem(keyHeight);
-      this.setState({ storedHeight });
-    } catch (error) {
-      Alert.alert('Error', 'There was an error while loading the data');
-    }
-  }
-
-  onLoadBMI = async () => {
-    try {
-      const storedBMI = await AsyncStorage.getItem(keyBMI);
-      this.setState({ storedBMI });
-    } catch (error) {
-      Alert.alert('Error', 'There was an error while loading the data');
-    }
-  }
-
-  onSave = async () => {
-
-  }
 
   onChange = (text) => {
     this.setState({ inputValue: text });
   }
 
-  onComputePress = async () => {
-    const { storedHeight, storedWeight, storedBMI } = this.state;
-    const BMI = ((storedWeight / (storedHeight * storedHeight)) * 703).toFixed(1);
-    this.setState({ storedBMI: BMI });
-    try {
-      await AsyncStorage.setItem(keyHeight, this.state.storedHeight.toString());
-      await AsyncStorage.setItem(keyBMI, this.state.storedBMI.toString());
-    } catch (error) {
-      Alert.alert('Error', 'There was an error while saving the data');
-    }
-  };
+  calcBMI = () => {
+    const bmi = (parseFloat(weight / (height * height)) * 703).toFixed(1);
+    console.log("calc");
+    setBMI(bmi);
+    return bmi
+   };
 
-
-  onSetWeight = (weight) => {
-    this.setState({ storedWeight: weight});
-  }
-
-  onSetHeight = (height) => {
-    this.setState({ storedHeight: height});
-  }
-
-  render() {
-    const { storedWeight, storedHeight, storedBMI } = this.state;
-
-    return (
+  return (
       <SafeAreaView style={styles.container}>
         <Text style={styles.toolbar}>BMI Calculator</Text>
         <ScrollView style={styles.content}>
         <View>
         <TextInput
           style={styles.input}
-          onChangeText={this.onSetWeight}
-          value={storedWeight}
+          // onChangeText={(weight) => setWeight(weight)}
+          value={weight}
           placeholder="Weight in Pounds"/>
-
           <TextInput style={styles.input}
-            placeholder="Height in inches"
-            onChangeText={this.onSetHeight}
-            value={storedHeight}/>
+          // onChangeText={(height) => setHeight(height)}
+          value={height}
+            placeholder="Height in inches"/>
           <Pressable
-          onPress={this.onComputePress}
+          onPress={add()}
           >
           {({ pressed }) => (
             <Text style={styles.button}>Compute BMI</Text>
           )}
         </Pressable>
-        {  storedBMI > 0 ? <Text style={styles.display}>Body Mass Index is {storedBMI}</Text> : <Text></Text>}
-        </View>
         <View>
-        <Text style={styles.assessment}>
-          Assessing Your BMI{'\n'} 
-          {'\t'}Underweight: less than 18.5{'\n'}
-          {'\t'}Healthy: 18.5 to 24.9{'\n'}
-          {'\t'}Overweight: 25.0 to 29.9{'\n'}
-          {'\t'}Obese: 30.0 or higher{'\n'}
-        </Text>
+        {  bmi > 0 ? <Text style={styles.display}>Body Mass Index is {bmi}</Text> : <Text></Text>}
+        {  bmi > 0 && bmi < 18.5 ? <Text style={styles.display}>(Underweight)</Text> : <Text></Text>}
+        {  bmi > 18.5 && bmi < 24.9 ? <Text style={styles.display}>(Healthy)</Text> : <Text></Text>}
+        {  bmi > 25.0 && bmi < 29.9 ? <Text style={styles.display}>(Overweight)</Text> : <Text></Text>}
+        {  bmi > 30.0 ? <Text style={styles.display}>(Obese)</Text> : <Text></Text>}
+        </View>
         </View>
         </ScrollView>
 </SafeAreaView>
     );
-  }
-}
+  };
+
 
 const styles = StyleSheet.create({
   container: {
@@ -164,7 +193,7 @@ const styles = StyleSheet.create({
     color: 'white',
   },
   display: {
-    fontSize: 28,
+    fontSize: 20,
     textAlign: 'center',
     paddingTop: 25
   },
